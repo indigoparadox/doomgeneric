@@ -13,6 +13,16 @@
 #include <X11/Xatom.h>
 #include <X11/XKBlib.h>
 
+#ifdef DG_NTSC
+#define NTSC_C
+#include "ntsc.h"
+
+static uint32_t* ntsc_buffer = NULL;
+static struct NTSC_SETTINGS ntsc;
+static struct CRT crt;
+static int ntsc_field = 0;
+#endif /* DG_NTSC */
+
 static Display *s_Display = NULL;
 static Window s_Window = NULL;
 static int s_Screen = 0;
@@ -97,6 +107,24 @@ void DG_Init()
 
     int depth = DefaultDepth(s_Display, s_Screen);
 
+#ifdef DG_NTSC
+    ntsc_buffer = malloc( DOOMGENERIC_RESX * DOOMGENERIC_RESY * 4 );
+
+    /* Initialize CRT buffer. */
+    crt_init(
+       &crt, DOOMGENERIC_RESX, DOOMGENERIC_RESY,
+       CRT_PIX_FORMAT_RGBA, (unsigned char*)ntsc_buffer );
+    crt.blend = 1;
+    crt.scanlines = 1;
+
+    ntsc.data = (unsigned char*)DG_ScreenBuffer;
+    ntsc.format = CRT_PIX_FORMAT_RGBA;
+    ntsc.w = DOOMGENERIC_RESX;
+    ntsc.h = DOOMGENERIC_RESY;
+    ntsc.as_color = 1;
+    ntsc.raw = 1;
+#endif /* DG_NTSC */
+
     s_Window = XCreateSimpleWindow(s_Display, DefaultRootWindow(s_Display), 0, 0, DOOMGENERIC_RESX, DOOMGENERIC_RESY, 0, blackColor, blackColor);
 
     XSelectInput(s_Display, s_Window, StructureNotifyMask | KeyPressMask | KeyReleaseMask);
@@ -121,7 +149,13 @@ void DG_Init()
         }
     }
 
-    s_Image = XCreateImage(s_Display, DefaultVisual(s_Display, s_Screen), depth, ZPixmap, 0, (char *)DG_ScreenBuffer, DOOMGENERIC_RESX, DOOMGENERIC_RESX, 32, 0);
+    s_Image = XCreateImage(s_Display, DefaultVisual(s_Display, s_Screen), depth, ZPixmap, 0,
+#ifdef DG_NTSC
+    (char *)ntsc_buffer,
+#else
+    (char *)DG_ScreenBuffer,
+#endif /* DG_NTSC */
+    DOOMGENERIC_RESX, DOOMGENERIC_RESX, 32, 0);
 }
 
 
@@ -147,6 +181,16 @@ void DG_DrawFrame()
                 addKeyToQueue(0, sym);
             }
         }
+
+#ifdef DG_NTSC
+        ntsc.field = ntsc_field & 1;
+        if( 0 == ntsc.field ) {
+            ntsc.frame ^= 1;
+        }
+        crt_modulate( &crt, &ntsc );
+        crt_demodulate( &crt, 52 /* noise */ );
+        ntsc_field ^= 1;
+#endif /* DG_NTSC */
 
         XPutImage(s_Display, s_Window, s_Gc, s_Image, 0, 0, 0, 0, DOOMGENERIC_RESX, DOOMGENERIC_RESY);
 
@@ -209,6 +253,9 @@ int main(int argc, char **argv)
         doomgeneric_Tick();
     }
     
+#ifdef DG_NTSC
+    free( ntsc_buffer );
+#endif /* DG_NTSC */
 
     return 0;
 }
